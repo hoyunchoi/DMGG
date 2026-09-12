@@ -22,7 +22,6 @@ from torch import nn
 
 from DMGG.env.graph_space import GraphSpace
 from DMGG.env.pyg_obs import PygObs
-
 from DMGG.net.film import FiLM
 
 
@@ -34,6 +33,7 @@ class GraphFeaturesExtractor(BaseFeaturesExtractor):
         # ------- Encoders -------
         # Input global attribute will be 0 or 1 (sign of gap)
         self.glob_encoder = nn.Embedding(2, hidden_dim)
+        # self.glob_encoder = nn.Linear(1, hidden_dim)  # ABLATION: gap
 
         # Node attribute and global embedding
         self.node_encoder = nn.Sequential(
@@ -78,8 +78,15 @@ class GraphFeaturesExtractor(BaseFeaturesExtractor):
         )
 
     def forward(self, obs: PygObs) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            node_emb: [BN, H]
+            edge_emb: [BE, H]
+            glob_emb: [B, H]
+        """
         # ------- Input processing -------
         node_attr = obs.node_attr
+        # node_attr = torch.ones_like(obs.node_attr) # ABLATION: node_attr=1
         edge_index = obs.edge_list.T  # [2, BE]
         bi_edge_index = obs.bi_edge_list.T  # [2, 2BE]
         node_batch = obs.node_batch
@@ -92,6 +99,7 @@ class GraphFeaturesExtractor(BaseFeaturesExtractor):
 
         # Global embedding: [B, ] -> [B, H]
         glob_emb = self.glob_encoder(signed_gap)
+        # glob_emb = self.glob_encoder(obs.glob_attr[:, :1])  # ABLATION: gap, [B, 1] -> [B, H]
 
         # Node encoding: [BN, 1 + H] -> [BN, H]
         node_emb = self.node_encoder(

@@ -114,7 +114,7 @@ class GraphRolloutBuffer(DictRolloutBuffer):
 
         self.returns = self.advantages + values
 
-    def add(  # type: ignore[override]
+    def add(  # type:ignore[override]
         self,
         obs: GraphVecObs,
         action: torch.LongTensor,
@@ -146,7 +146,7 @@ class GraphRolloutBuffer(DictRolloutBuffer):
         if self.pos == self.buffer_size:
             self.full = True
 
-    def get( # type: ignore[override]
+    def get( # type:ignore[override]
         self, batch_size: int | None = None
     ) -> Generator[GraphRolloutBufferSamples, None, None]:
         """Get samples from buffer using pre-allocated pinned tensors"""
@@ -154,7 +154,7 @@ class GraphRolloutBuffer(DictRolloutBuffer):
 
         # Prepare the data
         if not self.generator_ready:
-            self.observations = self.swap_and_flatten(self.graphs) # type: ignore[assignment]
+            self.observations = self.swap_and_flatten(self.graphs) # type:ignore[assignment]
             del self.graphs
 
             self.actions = cast(torch.LongTensor, self.swap_and_flatten(self.actions))
@@ -174,7 +174,7 @@ class GraphRolloutBuffer(DictRolloutBuffer):
             yield self._get_samples(indices[start_idx : start_idx + batch_size])
             start_idx += batch_size
 
-    def _get_samples(self, batch_inds: np.ndarray) -> GraphRolloutBufferSamples: # type: ignore[override]
+    def _get_samples(self, batch_inds: np.ndarray) -> GraphRolloutBufferSamples: # type:ignore[override]
         """Get samples using pinned tensors with non-blocking transfer"""
 
         # Overwrite batch data to pinned tensors

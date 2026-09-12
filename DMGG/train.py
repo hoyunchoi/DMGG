@@ -3,10 +3,11 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from path import RESULT_DIR
+
 from DMGG.experiment_setup import get_random_id, save, setup_training
 from DMGG.hyperparameter import get_hp
 from DMGG.net import count_trainable_params
-from path import RESULT_DIR
 
 
 def main() -> None:

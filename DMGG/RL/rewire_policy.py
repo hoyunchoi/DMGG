@@ -161,6 +161,10 @@ class RewirePolicy(ActorCriticPolicy):
         mode1_contrib = degree1 * degree4 + degree2 * degree3
         is_mode1_ineffective = current_contrib == mode1_contrib
 
+        # ABLATION: mask
+        # is_mode0_ineffective = torch.zeros_like(is_mode0_ineffective)
+        # is_mode1_ineffective = torch.zeros_like(is_mode1_ineffective)
+
         return (
             cast(torch.BoolTensor, is_mode0_invalid),
             cast(torch.BoolTensor, is_mode1_invalid),
@@ -252,6 +256,129 @@ class RewirePolicy(ActorCriticPolicy):
 
         return ScatterBernoulli(probs=probs)
 
+    def _sample_edge1(
+        self,
+        edge1_logits: torch.Tensor,
+        obs: PygObs,
+        deterministic: bool,
+        edge1_mask: torch.BoolTensor | None = None,
+    ) -> tuple[torch.LongTensor, ScatterCategorical]:
+        edge1_dist = self.get_categorical_distribution(
+            edge1_logits, obs.edge_batch, obs.edge_ptr, edge1_mask
+        )
+        if deterministic:
+            edge1_idx = scatter_argmax(
+                edge1_dist.logits,
+                obs.edge_batch,
+                dim=0,
+                dim_size=obs.num_graphs,
+            )
+        else:
+            edge1_idx = edge1_dist.sample()
+
+        return cast(torch.LongTensor, edge1_idx), edge1_dist
+
+    def _get_edge2_masks(
+        self, edge1_idx: torch.LongTensor, obs: PygObs
+    ) -> tuple[torch.BoolTensor, torch.BoolTensor, torch.BoolTensor, torch.BoolTensor]:
+        """
+        Returns
+            edge2_mask: [BE, ]. When True, corresponding edge2 should not be sampled
+                        same as mode0_mask & mode1_mask
+            mode0_mask: [BE, ]. When True, corresponding mode0 should not be sampled
+            mode1_mask: [BE, ]. When True, corresponding mode1 should not be sampled
+            has_no_edge2_candidate: [B, ]. When True, corresponding edge1 does not have valid edge2 candidate
+        """
+        edge_batch, num_batch = obs.edge_batch, obs.num_graphs
+
+        (
+            is_mode0_invalid,
+            is_mode1_invalid,
+            is_mode0_ineffective,
+            is_mode1_ineffective,
+        ) = self.get_masks(edge1_idx, obs)
+
+        # Initially, consider both invalid and ineffective mask
+        mode0_mask = is_mode0_invalid | is_mode0_ineffective
+        mode1_mask = is_mode1_invalid | is_mode1_ineffective
+        edge2_mask = mode0_mask & mode1_mask
+
+        # Check is there is no edge2 candidate
+        has_no_edge2_candidate = (  # [B, ]
+            scatter_sum((~edge2_mask).float(), edge_batch, dim_size=num_batch) == 0.0
+        )
+        if has_no_edge2_candidate.any():
+            # For batch without edge2 candidate,
+            # loosen the condition to only consider invalid mask
+            needs_fallback = has_no_edge2_candidate[edge_batch]
+            mode0_mask = torch.where(needs_fallback, is_mode0_invalid, mode0_mask)
+            mode1_mask = torch.where(needs_fallback, is_mode1_invalid, mode1_mask)
+            edge2_mask = mode0_mask & mode1_mask
+            has_no_edge2_candidate = (
+                scatter_sum((~edge2_mask).float(), edge_batch, dim_size=num_batch)
+                == 0.0
+            )
+
+        return (
+            cast(torch.BoolTensor, edge2_mask),
+            cast(torch.BoolTensor, mode0_mask),
+            cast(torch.BoolTensor, mode1_mask),
+            cast(torch.BoolTensor, has_no_edge2_candidate),
+        )
+
+    def _sample_edge2(
+        self,
+        edge1_idx: torch.LongTensor,
+        edge_emb: torch.Tensor,
+        glob_emb: torch.Tensor,
+        obs: PygObs,
+        deterministic: bool,
+        edge2_mask: torch.BoolTensor,
+    ) -> tuple[torch.LongTensor, ScatterCategorical]:
+        edge2_logits = self.compute_edge2_logits(
+            edge1_idx, edge_emb, glob_emb, obs.edge_batch
+        )
+        edge2_dist = self.get_categorical_distribution(
+            edge2_logits,
+            obs.edge_batch,
+            obs.edge_ptr,
+            edge2_mask,
+        )
+        if deterministic:
+            edge2_idx = scatter_argmax(
+                edge2_dist.logits,
+                obs.edge_batch,
+                dim=0,
+                dim_size=obs.num_graphs,
+            )
+        else:
+            edge2_idx = edge2_dist.sample()
+
+        return cast(torch.LongTensor, edge2_idx), edge2_dist
+
+    def _sample_mode(
+        self,
+        edge1_idx: torch.LongTensor,
+        edge2_idx: torch.LongTensor,
+        edge_emb: torch.Tensor,
+        glob_emb: torch.Tensor,
+        mode0_mask: torch.BoolTensor,
+        mode1_mask: torch.BoolTensor,
+        deterministic: bool,
+    ) -> tuple[torch.LongTensor, ScatterBernoulli]:
+        mode_prob = self.compute_mode_prob(edge1_idx, edge2_idx, edge_emb, glob_emb)
+        mode_dist = self.get_bernoulli_distribution(
+            mode_prob,
+            cast(torch.BoolTensor, mode0_mask[edge2_idx]),
+            cast(torch.BoolTensor, mode1_mask[edge2_idx]),
+        )
+        if deterministic:
+            mode = mode_dist.probs > 0.5
+        else:
+            mode = mode_dist.sample()
+
+        return cast(torch.LongTensor, mode.to(torch.int64)), mode_dist
+
     # ---- Override SB3's Actor-Critic Policy API ----
     def _get_constructor_parameters(self) -> dict[str, Any]:
         data = super()._get_constructor_parameters()
@@ -320,7 +447,7 @@ class RewirePolicy(ActorCriticPolicy):
             params, lr=lr_schedule(1), **self.optimizer_kwargs  # type:ignore[call-arg]
         )
 
-    def obs_to_tensor(self, obs: GraphObs | GraphVecObs) -> tuple[PygObs, bool]:  # type: ignore[override]
+    def obs_to_tensor(self, obs: GraphObs | GraphVecObs) -> tuple[PygObs, bool]:  # type:ignore[override]
         if isinstance(obs, list):
             vectorized_env = True
             pyg_obs = PygObs.from_graph_vec_obs(
@@ -332,7 +459,7 @@ class RewirePolicy(ActorCriticPolicy):
 
         return pyg_obs, vectorized_env
 
-    def forward(  # type: ignore[override]
+    def forward(  # type:ignore[override]
         self, obs: PygObs, deterministic: bool = False, only_action: bool = False
     ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
         """
@@ -343,108 +470,49 @@ class RewirePolicy(ActorCriticPolicy):
             value: [B, ]
             log_prob: [B, ]
         """
-        num_batch = obs.num_graphs
-        # Feature extraction: [BN, H], [BE, H], [B, GF-1 + H/2]
+        # Feature extraction: [BN, H], [BE, H], [B, H]
         node_emb, edge_emb, glob_emb = self.extract_features(obs)
 
         # --------------- Edge1 sampling ---------------
         edge1_logits = self.compute_edge1_logits(  # [BE, ]
             edge_emb, glob_emb, obs.edge_batch
         )
+        edge1_idx, edge1_dist = self._sample_edge1(edge1_logits, obs, deterministic)
 
-        # Get edge1 distribution P(e1) and sample edge1
-        if deterministic:
-            # Choose edge with the highest logit per graph
-            edge1_dist = self.get_categorical_distribution(
-                edge1_logits, obs.edge_batch, obs.edge_ptr
+        edge1_mask = cast(  # [BE, ]
+            torch.BoolTensor, torch.zeros_like(edge1_logits, dtype=torch.bool)
+        )
+        while True:
+            edge2_mask, mode0_mask, mode1_mask, has_no_edge2_candidate = (
+                self._get_edge2_masks(edge1_idx, obs)
             )
-            edge1_idx = scatter_argmax(
-                edge1_logits, obs.edge_batch, dim=0, dim_size=num_batch
-            )
-        else:
-            edge1_dist = self.get_categorical_distribution(
-                edge1_logits,
-                obs.edge_batch,
-                obs.edge_ptr,
-            )
-            edge1_idx = edge1_dist.sample()
+            if not has_no_edge2_candidate.any():
+                break
 
-        # Global edge1 indices: index of edge1 in the edge_list [BE, 2] (with offset)
-        edge1_idx = cast(torch.LongTensor, edge1_idx)  # [B, ]
+            # Edge1 which does not have candidate edge2 should not be sampled
+            # Mask the edge1 and resample
+            edge1_mask[edge1_idx[has_no_edge2_candidate]] = True
+            new_edge1_idx, _ = self._sample_edge1(
+                edge1_logits, obs, deterministic, edge1_mask
+            )
+            edge1_idx = cast(
+                torch.LongTensor,
+                torch.where(has_no_edge2_candidate, new_edge1_idx, edge1_idx),
+            )
 
-        # --------------- Edge2 sampling ---------------
-        # compute logits and mask of edge2, conditioned on edge1
-        edge2_logits = self.compute_edge2_logits(  # [BE, ]
-            edge1_idx, edge_emb, glob_emb, obs.edge_batch
+        edge2_idx, edge2_dist = self._sample_edge2(
+            edge1_idx, edge_emb, glob_emb, obs, deterministic, edge2_mask
         )
 
-        # Get mask for invalid rewires when edge1 is fixed
-        # [BE, ], [BE, ]
-        (
-            is_mode0_invalid,
-            is_mode1_invalid,
-            is_mode0_ineffective,
-            is_mode1_ineffective,
-        ) = self.get_masks(edge1_idx, obs)
-
-        # Default mask of mode0 and mode1: both invalid and ineffective
-        mode0_mask = is_mode0_invalid | is_mode0_ineffective
-        mode1_mask = is_mode1_invalid | is_mode1_ineffective
-        edge2_mask = mode0_mask & mode1_mask
-
-        # Check if all batches have at least one valid edge2
-        # If any batch has no valid edge2, use invalid mask only
-        has_no_valid_edge2 = (  # [B, ]
-            scatter_sum((~edge2_mask).float(), obs.edge_batch, dim_size=num_batch)
-            == 0.0
+        mode, mode_dist = self._sample_mode(
+            edge1_idx,
+            edge2_idx,
+            edge_emb,
+            glob_emb,
+            mode0_mask,
+            mode1_mask,
+            deterministic,
         )
-        if has_no_valid_edge2.any():
-            needs_fallback = has_no_valid_edge2[obs.edge_batch]
-            mode0_mask = torch.where(needs_fallback, is_mode0_invalid, mode0_mask)
-            mode1_mask = torch.where(needs_fallback, is_mode1_invalid, mode1_mask)
-            edge2_mask = mode0_mask & mode1_mask
-
-        edge2_mask = cast(torch.BoolTensor, edge2_mask)
-
-        # Check if all batches have at least one valid edge2
-        # valid_edge2_per_batch = scatter_sum(
-        #     (~edge2_mask).float(), obs.edge_batch, dim=0, dim_size=num_batch
-        # )
-        # assert (
-        #     valid_edge2_per_batch > 0
-        # ).all(), f"Some batches have no valid edge2! Valid counts: {valid_edge2_per_batch.tolist()}"
-
-        # Get edge2 distribution P(e2 | e1) and sample edge2
-        edge2_dist = self.get_categorical_distribution(
-            edge2_logits, obs.edge_batch, obs.edge_ptr, edge2_mask
-        )
-        if deterministic:
-            edge2_idx = scatter_argmax(
-                edge2_dist.logits, obs.edge_batch, dim=0, dim_size=num_batch
-            )
-        else:
-            edge2_idx = edge2_dist.sample()
-
-        # Global edge2 indices: index of edge2 in the edge_list [BE, 2] (with offset)
-        edge2_idx = cast(torch.LongTensor, edge2_idx)  # [B, ]
-
-        # --------------- Mode sampling ---------------
-        # Sample mode, conditioned on edge1 and edge2
-        mode_prob = self.compute_mode_prob(  # [B, ]
-            edge1_idx, edge2_idx, edge_emb, glob_emb
-        )
-
-        # Get mode mask for sampled edge2: [BE, ] -> [B, ]
-        mode0_mask = cast(torch.BoolTensor, mode0_mask[edge2_idx])
-        mode1_mask = cast(torch.BoolTensor, mode1_mask[edge2_idx])
-
-        # Get mode distribution P(m | e1, e2) and sample mode
-        mode_dist = self.get_bernoulli_distribution(mode_prob, mode0_mask, mode1_mask)
-        if deterministic:
-            mode = mode_dist.probs > 0.5  # [B, ], boolean
-        else:
-            mode = mode_dist.sample()  # [B, ], float32
-        mode = cast(torch.LongTensor, mode.to(torch.int64))
 
         # ---------- Collect action, value, log_prob ------------
         # Change global edge indices to local edge indices: removing graph offsets
@@ -475,7 +543,7 @@ class RewirePolicy(ActorCriticPolicy):
 
         return action, value, log_prob
 
-    def extract_features(  # type: ignore[override]
+    def extract_features(  # type:ignore[override]
         self, obs: PygObs
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.features_extractor(obs)
@@ -488,7 +556,7 @@ class RewirePolicy(ActorCriticPolicy):
             "_get_action_dist_from_latent is not used in AutoRegressiveRewirePolicy"
         )
 
-    def predict(  # type: ignore[override]
+    def predict(  # type:ignore[override]
         self, observation: GraphObs | GraphVecObs, deterministic: bool = False
     ) -> npt.NDArray[np.int64]:
         self.set_training_mode(False)
@@ -500,7 +568,7 @@ class RewirePolicy(ActorCriticPolicy):
         actions = actions.cpu().numpy()  # [B, 3]
         return actions
 
-    def _predict(  # type: ignore[override]
+    def _predict(  # type:ignore[override]
         self, observation: PygObs, deterministic: bool = False
     ) -> torch.LongTensor:
         actions, *_ = self.forward(
@@ -508,7 +576,7 @@ class RewirePolicy(ActorCriticPolicy):
         )
         return actions
 
-    def evaluate_actions(  # type: ignore[override]
+    def evaluate_actions(  # type:ignore[override]
         self, obs: PygObs, action: torch.LongTensor
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         """
@@ -597,7 +665,7 @@ class RewirePolicy(ActorCriticPolicy):
 
         return value, log_prob, None
 
-    def predict_values(self, obs: PygObs) -> torch.Tensor:  # type: ignore[override]
+    def predict_values(self, obs: PygObs) -> torch.Tensor:  # type:ignore[override]
         # Feature extraction: [BN, H], [BE, H]
         node_emb, edge_emb, _ = self.extract_features(obs)
 
@@ -779,12 +847,8 @@ class RewirePolicy(ActorCriticPolicy):
         )
 
     @torch.no_grad()
-    def get_joint_degree_flux(
-        self, observation: GraphObs | GraphVecObs
-    ) -> torch.Tensor:
+    def get_joint_degree_flux(self, observation: GraphObs | GraphVecObs) -> torch.Tensor:
         """
-        Get joint degree flux matrix of a graph
-
         Return:
             joint_degree_flux: [D, D], where D is the maximum degree of graph
         """
@@ -925,7 +989,3 @@ class RewirePolicy(ActorCriticPolicy):
         )
 
         return joint_degree_flux
-
-    def reset_cache(self) -> None:
-        """Only for compatibility with EvalRewirePolicy"""
-        return

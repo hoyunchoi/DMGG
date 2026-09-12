@@ -22,7 +22,7 @@ class GraphPPO(PPO):
     _last_episode_starts: npt.NDArray[np.bool_]
     _last_obs: GraphVecObs
     env: GraphVecEnv
-    policy: RewirePolicy  # type: ignore[override]
+    policy: RewirePolicy
     rollout_buffer: GraphRolloutBuffer
 
     def __init__(
@@ -32,7 +32,7 @@ class GraphPPO(PPO):
         amp_dtype: str = "bf16",
         _init_setup_model: bool = True,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(*args, _init_setup_model=_init_setup_model, **kwargs)
 
         self._amp_dtype = amp_dtype
@@ -83,14 +83,14 @@ class GraphPPO(PPO):
             target = torch.compile(target, **config)
             setattr(self.policy, target_name, target)
 
-    def set_env(  # type: ignore[override]
+    def set_env(  # type:ignore[override]
         self, env: RewireEnv | GraphVecEnv, force_reset: bool = True
     ) -> None:
         n_envs = self.n_envs if hasattr(self, "n_envs") else None
 
-        env = cast(GraphVecEnv, self._wrap_env(env, self.verbose, True))  # type: ignore[arg-type]
+        env = cast(GraphVecEnv, self._wrap_env(env, self.verbose, True))  # type:ignore[arg-type]
 
-        self.env = env  # type: ignore[assignment]
+        self.env = env
         self.n_envs = env.num_envs
         self.observation_space = env.observation_space
         self.action_space = env.action_space
@@ -103,7 +103,7 @@ class GraphPPO(PPO):
             if self.verbose >= 1:
                 print(f"Recreating rollout buffer: {n_envs} envs -> {self.n_envs} envs")
 
-            self.rollout_buffer = GraphRolloutBuffer(  # type: ignore[assignment]
+            self.rollout_buffer = GraphRolloutBuffer(
                 self.n_steps,
                 self.observation_space,
                 self.action_space,
@@ -119,7 +119,7 @@ class GraphPPO(PPO):
         if force_reset:
             self._last_obs = None  # type:ignore[assignment]
 
-    def collect_rollouts(  # type: ignore[override]
+    def collect_rollouts(  # type:ignore[override]
         self,
         env: GraphVecEnv,
         callback: BaseCallback,
@@ -134,6 +134,7 @@ class GraphPPO(PPO):
         rollout_buffer.reset()
         callback.on_rollout_start()
 
+        new_obs, dones = self._last_obs, np.array([]) # for unbound variable
         while n_steps < n_rollout_steps:
             with torch.no_grad():
                 actions, values, log_probs = self.policy(
@@ -183,11 +184,11 @@ class GraphPPO(PPO):
         with torch.no_grad():
             # Compute value for the last timestep
             values = self.policy.predict_values(
-                PygObs.from_graph_vec_obs(new_obs, device=self.device)  # type: ignore[unbound-variable]
+                PygObs.from_graph_vec_obs(new_obs, device=self.device)
             )
         values = values.to(torch.float32)
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)  # type: ignore[unbound-variable]
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
         callback.update_locals(locals())
 
@@ -223,6 +224,7 @@ class GraphPPO(PPO):
         pg_losses: list[torch.Tensor] = []
         value_losses: list[torch.Tensor] = []
         clip_fractions: list[torch.Tensor] = []
+        loss, approx_kl_divs = torch.tensor([]), [] # for unbound variable
 
         continue_training = True
         # train for n_epochs epochs
@@ -339,11 +341,11 @@ class GraphPPO(PPO):
             "train/policy_gradient_loss", torch.stack(pg_losses).mean().item()
         )
         self.logger.record("train/value_loss", torch.stack(value_losses).mean().item())
-        self.logger.record("train/approx_kl", torch.stack(approx_kl_divs).mean().item())  # type: ignore[unbound-variable]
+        self.logger.record("train/approx_kl", torch.stack(approx_kl_divs).mean().item())
         self.logger.record(
             "train/clip_fraction", torch.stack(clip_fractions).mean().item()
         )
-        self.logger.record("train/loss", loss.item())  # type: ignore[unbound-variable]
+        self.logger.record("train/loss", loss.item())
         self.logger.record("train/explained_variance", explained_var)
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
@@ -355,7 +357,7 @@ class GraphPPO(PPO):
         """Add custom parameters to the excluded parameters, which prevent saving in pickle format"""
         return super()._excluded_save_params() + ["grad_scaler"]
 
-    def save(self, result_dir: Path) -> None:  # type: ignore[override]
+    def save(self, result_dir: Path) -> None:  # type:ignore[override]
         # Save original policy if compiled
         compiled: dict[str, nn.Module] = {}
         if self._is_compiled:
@@ -383,7 +385,7 @@ class GraphPPO(PPO):
         del compiled
 
     @classmethod
-    def load(  # type: ignore[override]
+    def load(  # type:ignore[override]
         cls,
         result_dir: Path,
         env: RewireEnv | GraphVecEnv,

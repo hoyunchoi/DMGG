@@ -33,3 +33,4 @@ torch = { index = "pytorch-cu130" }
 
 [tool.isort]
 profile = "black"
+src_paths = ["DMGG", "ERGM", "graph", "baselines"]

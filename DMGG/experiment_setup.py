@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from path import RESULT_DIR
 from stable_baselines3.common.vec_env import VecMonitor
 from torch import optim
 
@@ -20,7 +21,6 @@ from DMGG.rng import (
     set_rng_state,
     set_seed,
 )
-from path import RESULT_DIR
 
 
 def get_random_id(length: int = 8) -> str:

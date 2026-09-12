@@ -60,11 +60,11 @@ def _get_gradient(
     return grad
 
 
-def get_max_entropy_adjacency_matrix(
+def get_max_dyad_independent_entropy_adjacency_matrix(
     degrees: npt.NDArray[np.int64],
 ) -> npt.NDArray[np.float64]:
     """
-    Compute maximum entropy adjacency matrix
+    Compute adjacency matrix for given degrees with maximum dyad-independent entropy
     """
     num_nodes = len(degrees)
     upper_indices = np.triu_indices(num_nodes, k=1)
@@ -86,15 +86,18 @@ def get_max_entropy_adjacency_matrix(
 
 
 @njit(fastmath=True)
-def get_entropy(adjacency_matrix: npt.NDArray[np.float64], num_edges: int) -> float:
+def get_dyad_independent_entropy(adjacency_matrix: npt.NDArray[np.float64]) -> float:
+    """
+    Compute dyad-independent entropy
+        S_DI = - 1/2 sum_{i, j} p_ij log p_ij + (1-p_ij) log (1-p_ij)
+             = - sum_{i < j} p_ij log p_ij + (1-p_ij) log (1-p_ij)
+    """
     num_nodes = len(adjacency_matrix)
     entropy = 0.0
 
-    for i in range(num_nodes):
-        for j in range(i + 1, num_nodes):
-            value = adjacency_matrix[i, j]
-            if value <= 0.0 or value >= 1.0:
-                continue
-            entropy -= value * np.log(value) + (1.0 - value) * np.log(1.0 - value)
-
-    return 2.0 * entropy / num_edges
+    for row_idx in range(num_nodes):
+        for col_idx in range(row_idx + 1, num_nodes):
+            value = adjacency_matrix[row_idx, col_idx]
+            if 0.0 < value and value < 1.0:
+                entropy -= value * np.log(value) + (1.0 - value) * np.log(1.0 - value)
+    return entropy

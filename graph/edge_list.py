@@ -9,7 +9,7 @@ from scipy import sparse
 from graph.type_aliases import EDGE, NODE
 
 
-@njit(fastmath=True, inline="always")
+@njit(inline="always")
 def canonical_edge(node1: NODE, node2: NODE) -> EDGE:
     """Return an ordered edge tuple `(u, v)` where `u < v`."""
     if node1 < node2:
@@ -17,9 +17,9 @@ def canonical_edge(node1: NODE, node2: NODE) -> EDGE:
     return node2, node1
 
 
-@njit(fastmath=True)
+@njit
 def edge_list_to_adjacency_matrix(
-    edge_list: npt.NDArray[np.uint32],
+    edge_list: npt.NDArray[np.uint32], num_nodes: int | None = None
 ) -> npt.NDArray[np.uint32]:
     """
     Build a dense adjacency matrix from an undirected edge list.
@@ -34,7 +34,8 @@ def edge_list_to_adjacency_matrix(
     if len(edge_list) == 0:
         return np.zeros((0, 0), dtype=np.uint32)
 
-    num_nodes = int(edge_list.max()) + 1
+    if num_nodes is None:
+        num_nodes = int(edge_list.max()) + 1
     adjacency_matrix = np.zeros((num_nodes, num_nodes), dtype=np.uint32)
     for node1, node2 in edge_list:
         adjacency_matrix[node1, node2] = 1
@@ -42,7 +43,7 @@ def edge_list_to_adjacency_matrix(
     return adjacency_matrix
 
 
-@njit(fastmath=True)
+@njit
 def edge_list_to_csr(
     num_nodes: int,
     edge_list: npt.NDArray[np.uint32],
@@ -86,7 +87,7 @@ def edge_list_to_sparse_adjacency(
     cols = edge_list[:, 1].astype(np.int64)
     data = np.ones(len(edge_list), dtype=np.float64)
 
-    return sparse.coo_array(  # coo_matrix → coo_array
+    return sparse.coo_array(  # ← coo_matrix → coo_array
         (
             np.concatenate([data, data]),
             (np.concatenate([rows, cols]), np.concatenate([cols, rows])),
@@ -96,7 +97,7 @@ def edge_list_to_sparse_adjacency(
     ).tocsr()
 
 
-@njit(fastmath=True)
+@njit
 def edge_list_to_degrees(
     num_nodes: int, edge_list: npt.NDArray[np.uint32]
 ) -> npt.NDArray[np.uint32]:
@@ -117,7 +118,22 @@ def edge_list_to_degrees(
     return degrees
 
 
-@njit(fastmath=True)
+@njit
+def get_mean_adjacency_matrix(
+    num_nodes: int, edge_lists: npt.NDArray[np.uint32]
+) -> npt.NDArray[np.float64]:
+    """Return the mean adjacency matrix over all graphs."""
+    sum_adjacency_matrix = np.zeros((num_nodes, num_nodes), dtype=np.uint64)
+
+    for edge_list in edge_lists:
+        for node1, node2 in edge_list:
+            sum_adjacency_matrix[node1, node2] += 1
+            sum_adjacency_matrix[node2, node1] += 1
+
+    return sum_adjacency_matrix / len(edge_lists)
+
+
+@njit
 def _find_root(parent: npt.NDArray[np.uint32], node: NODE) -> NODE:
     """Find a DSU root with path compression (path halving)."""
     while parent[node] != node:
@@ -126,7 +142,7 @@ def _find_root(parent: npt.NDArray[np.uint32], node: NODE) -> NODE:
     return node
 
 
-@njit(fastmath=True)
+@njit
 def _union(
     parent: npt.NDArray[np.uint32],
     size: npt.NDArray[np.uint32],
@@ -147,7 +163,7 @@ def _union(
         size[root1] += size[root2]
 
 
-@njit(fastmath=True)
+@njit
 def is_connected(num_nodes: int, edge_list: npt.NDArray[np.uint32]) -> bool:
     """
     Check whether all nodes are in one connected component.
@@ -175,7 +191,7 @@ def is_connected(num_nodes: int, edge_list: npt.NDArray[np.uint32]) -> bool:
     return True
 
 
-@njit(fastmath=True)
+@njit
 def has_selfloop(edge_list: npt.NDArray[np.uint32]) -> bool:
     """
     Check whether any edge is a self-loop.
@@ -192,7 +208,7 @@ def has_selfloop(edge_list: npt.NDArray[np.uint32]) -> bool:
     return False
 
 
-@njit(fastmath=True)
+@njit
 def has_multiedge(edge_list: npt.NDArray[np.uint32]) -> bool:
     """
     Check whether duplicate undirected edges exist.

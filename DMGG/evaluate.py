@@ -1,14 +1,16 @@
 import argparse
 import sys
 import typing
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import numpy.typing as npt
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from path import DATA_DIR
 
 from DMGG.data import DMGGData, save
 from DMGG.env import (
@@ -26,7 +28,6 @@ from graph.assortativity import get_maximum_assortativity, get_minimum_assortati
 from graph.edge_list import edge_list_to_csr, edge_list_to_degrees, edge_list_to_graph
 from graph.generator import GENERATORS, configuration_model
 from graph.properties import get_average_clustering_coefficient
-from path import DATA_DIR
 
 
 def get_args(options: list[str] | None = None) -> argparse.Namespace:
@@ -36,7 +37,9 @@ def get_args(options: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--exp_id", type=str, required=True)
 
     # Initial graph
-    parser.add_argument("--graph_type", type=str, choices=list(GENERATORS.keys()))
+    parser.add_argument(
+        "--graph_type", type=str, required=True, choices=list(GENERATORS.keys())
+    )
     parser.add_argument("--num_nodes", type=int, required=True)
     parser.add_argument("--mean_degree", type=float, required=True)
     parser.add_argument("--graph_seed", type=int, required=True)
@@ -68,21 +71,21 @@ def get_args(options: list[str] | None = None) -> argparse.Namespace:
 def sample_graph(
     policy: RewirePolicy,
     env: GraphVecEnv,
-    num_valid_graphs: int,
-    store_joint_degree: bool,
+    num_graphs: int,
+    store: list[STORE],
 ) -> list[DMGGData]:
-    step = 0
     num_infeasible = 0
     data_list: list[DMGGData] = []
     is_successes: list[bool] = []
+    step = 0
     joint_degree_matrices: list[npt.NDArray[np.uint32]] = []
     joint_degree_fluxes: list[npt.NDArray[np.float32]] = []
 
     obs = env.reset()
 
-    while len(is_successes) < num_valid_graphs:
+    while len(is_successes) < num_graphs:
         # ========= Compute joint degree matrix and flux =========
-        if store_joint_degree:
+        if "joint_degree" in store:
             joint_degree_matrix = env.get_attr("joint_degree_matrix")[0]
             joint_degree_flux = policy.get_joint_degree_flux(obs).cpu().numpy()
 
@@ -98,8 +101,6 @@ def sample_graph(
 
         # Check if the episode is done
         for env_id in np.where(dones)[0]:
-            policy.reset_cache()  # used for EvalRewirePolicy
-
             info = infos[env_id]
             is_success = not info["TimeLimit.truncated"]
 
@@ -110,7 +111,7 @@ def sample_graph(
                 )
                 num_infeasible += 1
 
-            if store_joint_degree:
+            if "joint_degree" in store:
                 joint_degree_matrix = info["joint_degree_matrix"]
                 joint_degree_matrices.append(
                     joint_degree_matrix.astype(np.uint32).copy()
@@ -160,8 +161,7 @@ def sample_graph(
 def main() -> None:
     args = get_args()
     args.use_mult = bool(args.use_mult)
-    store_joint_degree = "joint_degree" in args.store
-    if store_joint_degree:
+    if "joint_degree" in args.store:
         assert (
             args.num_envs == 1
         ), "Storing joint degree only supports single environment"
@@ -169,8 +169,6 @@ def main() -> None:
     # Load hyperparameters and model
     hp = get_hp([f"--resume={args.exp_id}"])
     model = setup_evaluation(hp)
-    policy = model.policy
-
     env_kwargs = hp.env_kwargs
 
     # ========== Setup initial graphs & graph range ==========
@@ -230,7 +228,7 @@ def main() -> None:
         env = GraphDummyVecEnv(env_fns)
 
     # =========== Sample graphs ===========
-    data_list = sample_graph(policy, env, args.num_graphs, store_joint_degree)
+    data_list = sample_graph(model.policy, env, args.num_graphs, args.store)
 
     # Write dataclass fields
     for data in data_list:
@@ -241,14 +239,7 @@ def main() -> None:
     # =========== Save results ===========
     data_dir = DATA_DIR / "DMGG"
     data_dir.mkdir(exist_ok=True)
-
-    g = args.graph_type
-    n = args.num_nodes
-    t = args.target
-    file_name = (
-        f"{args.exp_id}_{g}_N{n}_t{t}_{datetime.now().strftime('%m%d_%H%M%S_%f')}.h5"
-    )
-
+    file_name = f"{args.exp_id}_{args.graph_type}_N{args.num_nodes}_t{args.target}_{datetime.now().strftime('%m%d_%H%M%S_%f')}.h5"
     save(data_dir / file_name, data_list, args.store)
 
 

@@ -58,7 +58,7 @@ def get_marginal_prob(
 
 @njit(fastmath=True)
 def get_degree_variance(
-    max_degree: int, marginal_prob: npt.NDArray[np.float32]
+    max_degree: np.uint32, marginal_prob: npt.NDArray[np.float32]
 ) -> np.float32:
     """
     Compute the degree variance used in assortativity normalization.
@@ -135,7 +135,7 @@ def get_assortativity_from_edge_list(
 
     joint_degree_matrix = get_joint_degree_matrix(edge_list, degrees)
     marginal_prob = get_marginal_prob(joint_degree_matrix, num_edges)
-    degree_variance = get_degree_variance(int(degrees.max()), marginal_prob)
+    degree_variance = get_degree_variance(degrees.max(), marginal_prob)
 
     return get_assortativity(
         joint_degree_matrix, num_edges, marginal_prob, degree_variance

@@ -19,16 +19,16 @@ class GraphVecNormalize(VecNormalize):
 
     venv: GraphVecEnv
 
-    def reset(self) -> GraphVecObs: # type: ignore[override]
+    def reset(self) -> GraphVecObs: # type:ignore[override]
         obs = self.venv.reset()
-        self.old_obs = obs  # type: ignore[assignment]
+        self.old_obs = obs  # type:ignore[assignment]
         self.returns = np.zeros(self.num_envs)
 
         return obs
 
-    def step_wait(self) -> GraphVecEnvStepReturn: # type: ignore[override]
+    def step_wait(self) -> GraphVecEnvStepReturn: # type:ignore[override]
         obs, rewards, dones, infos = self.venv.step_wait()
-        self.old_obs = obs  # type: ignore[assignment]
+        self.old_obs = obs  # type:ignore[assignment]
         self.old_reward = rewards
 
         if self.training:
@@ -39,5 +39,5 @@ class GraphVecNormalize(VecNormalize):
         return obs, rewards, dones, infos
 
     @classmethod
-    def load(cls, load_path: str, venv: VecEnv) -> Self: # type: ignore[override]
+    def load(cls, load_path: str, venv: VecEnv) -> Self: # type:ignore[override]
         return cast(Self, super().load(load_path, venv))

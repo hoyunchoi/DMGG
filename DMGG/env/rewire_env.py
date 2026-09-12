@@ -7,8 +7,9 @@ D: maximum degree
 
 import copy
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Self
+from typing import Any, Self
 
 import networkx as nx
 import numpy as np
@@ -20,10 +21,10 @@ from DMGG.type_aliases import RESET_METHOD
 from graph.assortativity import (
     get_assortativity,
     get_degree_variance,
+    get_joint_degree_matrix,
     get_marginal_prob,
     get_maximum_assortativity,
     get_minimum_assortativity,
-    get_joint_degree_matrix,
 )
 from graph.edge_list import (
     canonical_edge,
@@ -158,7 +159,7 @@ class RewireEnv(Env):
 
     Reward:
         rho_gap = |rho^* - rho|
-        Physical tolerance: max(tolerance, 2.0 / (E * D_var))
+        Physical tolerance: max(tolerance, 0.99 / (E * D_var))
         - Potential-based reward: Phi(rho_gap) - Phi(rho_gap_last),
           where Phi(rho_gap) = |rho^*| + alpha / rho_gap + alpha.
         - Effective step penalty: min(rho_gap / (10.0 * physical_tolerance), 1) * step_penalty
@@ -283,18 +284,18 @@ class RewireEnv(Env):
             self.degree_variance,
         )
 
-        # Physically valid tolerance for small graphs
-        # Single rewire change assortativity by at least 2 / (E * D_var)
-        self.physical_tolerance = np.maximum(
-            self.tolerance,
-            2.0 / (self.num_edges * self.degree_variance),
-            dtype=np.float32,
-        )
-
         # ------------- Set random target assortativity -------------
         target_rho = self.sample_target_rho()
         assert target_rho is not None
         self.target_rho = target_rho
+
+        # Physically valid tolerance for small graphs
+        # Single rewire change assortativity by at least 2 / (E * D_var)
+        self.physical_tolerance = np.maximum(
+            self.tolerance,
+            0.99 / (self.num_edges * self.degree_variance),
+            dtype=np.float32,
+        )
 
         # ------------- Initialization -------------
         self.obs = self.get_obs(rho)
@@ -542,14 +543,6 @@ class EvalRewireEnv(RewireEnv):
             self.degree_variance,
         )
 
-        # Physically valid tolerance for small graphs
-        # Single rewire change assortativity by at least 2 / (E * D_var)
-        self.physical_tolerance = np.maximum(
-            self.tolerance,
-            2.0 / (self.num_edges * self.degree_variance),
-            dtype=np.float32,
-        )
-
         # ------------- Set random target assortativity -------------
         target_rho = self.sample_target_rho()
         if target_rho is None:
@@ -558,6 +551,14 @@ class EvalRewireEnv(RewireEnv):
         else:
             self._infeasible_target = False
             self.target_rho = target_rho
+
+        # Physically valid tolerance for small graphs
+        # Single rewire change assortativity by at least 2 / (E * D_var)
+        self.physical_tolerance = np.maximum(
+            self.tolerance,
+            0.99 / (self.num_edges * self.degree_variance),
+            dtype=np.float32,
+        )
 
         # ------------- Initialization -------------
         self.obs = self.get_obs(rho)

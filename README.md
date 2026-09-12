@@ -1,17 +1,11 @@
-This repository contains the code for the paper: **"Reinforcement Learning for Microcanonical Graph Ensemble with Assortativity Constraints"**.
+This repository contains the code for the paper: **"Reinforcement Learning for Graph Generation under a Hard Assortativity Constraint"**.
 
-It implements two methods for generating graphs under constraints on assortativity:
+It implements two main methods for generating graphs under constraints on assortativity:
 
 1. **ERGM** — an Exponential Random Graph Model (canonical ensemble with soft constraints) using Metropolis–Hastings sampling
 2. **DMGG** — *Deep Microcanonical Graph Generator* (microcanonical ensemble with hard constraints) using a learned rewiring policy trained via Proximal Policy Optimization (PPO)
 
-## Table of Contents
-
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Project Structure](#project-structure)
-- [ERGM](#ergm)
-- [DMGG](#dmgg)
+Additional baselines and small-system reference calculations are provided in `baselines/` for comparison.
 
 ## Requirements
 
@@ -79,6 +73,10 @@ project_root/
 │   ├── net/                     # Neural network modules
 │   ├── RL/                      # Custom Stable-baselines3 modules
 │   └── scatter/                 # Custom scatter operations for graph data
+├── baselines/
+│   ├── greedy/                  # Greedy rewiring baseline
+│   ├── ResiNet/                 # ResiNet-based PPO baseline
+│   └── small_system/            # Exact enumeration and ensemble calculations
 └── README.md
 ```
 
@@ -132,3 +130,9 @@ python DMGG/evaluate.py \
 ```
 
 For full lists of arguments, see each module with `python <module>.py --help`.
+
+## Baselines
+
+- **Greedy rewiring** ([`baselines/greedy/main.py`](baselines/greedy/main.py)): a degree-preserving search that accepts rewiring actions that strictly reduce the distance to the target assortativity.
+- **ResiNet** ([`baselines/ResiNet/`](baselines/ResiNet/)): a ResiNet-based policy adapted to target assortativity, using FireGNN graph representations and PPO with separate actor and critic optimizers. Training and evaluation entry points are `train.py` and `evaluate.py`.
+- **Small-system references** ([`baselines/small_system/`](baselines/small_system/)): exact enumeration of graphs with a fixed degree sequence (`find_all.py`) and canonical-ensemble calculations (`canonical_ensemble.py`) for comparison on small graphs.

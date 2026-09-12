@@ -41,7 +41,7 @@ class ScatterCategorical(Distribution):
             batch: [G, ] = [0, 0, ..., 0, 1, 1, ..., 1, ..., B-1, B-1, ..., B-1], group index for each element
             ptr: [B+1, ] = [0, G1, G1+G2, ..., G1+G2+...+GB], pointer for each group
         """
-        device = logits.device if logits is not None else probs.device  # type: ignore[attr-defined]
+        device = logits.device if logits is not None else probs.device  # type:ignore[attr-defined]
         assert (logits is None) != (
             probs is None
         ), "Either logits or probs must be provided, but not both"
@@ -78,14 +78,14 @@ class ScatterCategorical(Distribution):
             self._logits = logits - norm[self.batch]
             self._probs = None
         else:
-            probs = probs.to(torch.float32)  # type: ignore[attr-defined]
+            probs = probs.to(torch.float32)  # type:ignore[attr-defined]
 
             # Normalize
             norm = scatter_sum(probs, self.batch, dim=0, dim_size=self.num_batch)
             self._probs = probs / norm[self.batch]
             self._logits = None
 
-    def sample(self) -> torch.LongTensor:  # type: ignore[override]
+    def sample(self) -> torch.LongTensor:  # type:ignore[override]
         """
         Sample from the distribution using Gumbel-Max trick
 
@@ -100,7 +100,7 @@ class ScatterCategorical(Distribution):
 
         return scatter_argmax(score, self.batch, dim=0, dim_size=self.num_batch)
 
-    def log_prob(self, value: torch.LongTensor) -> torch.Tensor:  # type: ignore[override]
+    def log_prob(self, value: torch.LongTensor) -> torch.Tensor:  # type:ignore[override]
         """
         Arg:
             value: [B, ], Global indices
@@ -187,7 +187,7 @@ class ScatterBernoulli(Distribution):
             self._probs = logits_to_probs(self.logits, is_binary=True)
         return self._probs
 
-    def sample(self, sample_shape: tuple[int, ...] = tuple()) -> torch.Tensor:  # type: ignore[override]
+    def sample(self, sample_shape: tuple[int, ...] = tuple()) -> torch.Tensor:  # type:ignore[override]
         shape = sample_shape + self._batch_shape
 
         with torch.no_grad():
