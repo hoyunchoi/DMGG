@@ -2,8 +2,8 @@ This repository contains the code for the paper: **"Reinforcement Learning for G
 
 It implements two main methods for generating graphs under constraints on assortativity:
 
-1. **ERGM** — an Exponential Random Graph Model (canonical ensemble with soft constraints) using Metropolis–Hastings sampling
-2. **DMGG** — *Deep Microcanonical Graph Generator* (microcanonical ensemble with hard constraints) using a learned rewiring policy trained via Proximal Policy Optimization (PPO)
+1. **ERGM** — an Exponential Random Graph Model (soft-constrained ensemble) using Metropolis–Hastings sampling
+2. **DMGG** — *Deep Macrostate Graph Generator* (hard-constrained ensemble) using Proximal Policy Optimization (PPO) to learn a rewiring policy that guides graphs toward a prescribed macrostate
 
 Additional baselines and small-system reference calculations are provided in `baselines/` for comparison.
 
@@ -94,7 +94,7 @@ python ERGM/main.py --num_nodes 1000 --num_edges 3000 --graph_type ER --graph_se
 
 ## DMGG
 
-DMGG (Deep Microcanonical Graph Generator) reformulates graph generation as a Markov decision process. A learned policy selects rewiring actions that navigate the graph toward a target assortativity $\rho^*$, satisfying the hard constraint $|\rho − \rho^*| < \varepsilon$ with given tolerance $\varepsilon$ in every realization.
+DMGG (Deep Macrostate Graph Generator) reformulates graph generation as a Markov decision process. A learned policy selects rewiring actions that navigate the graph toward a target assortativity $\rho^*$, satisfying the hard constraint $|\rho − \rho^*| < \varepsilon$ with given tolerance $\varepsilon$ in every realization.
 
 #### Training
 
